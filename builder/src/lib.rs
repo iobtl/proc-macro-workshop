@@ -30,9 +30,27 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let builder_fields = quote! {
         #(#builder_fields_recurse),*
     };
+
+    let builder_fields_fn_recurse = fields.iter().map(|f| {
+        let name = &f.0;
+        let ty = &f.1;
+        quote! {
+            fn #name(&mut self, #name: #ty) -> &mut Self {
+                self.#name = Some(#name);
+                self
+            }
+        }
+    });
+    let builder_fns = quote! {
+       #(#builder_fields_fn_recurse)*
+    };
     let builder_struct = quote! {
         pub struct #builder_struct_name {
             #builder_fields
+        }
+
+        impl #builder_struct_name {
+            #builder_fns
         }
     };
 
