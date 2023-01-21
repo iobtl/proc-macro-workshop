@@ -46,7 +46,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let struct_fields_recurse = fields.iter().map(|f| {
         let name = &f.0;
         quote! {
-            #name: self.#name.unwrap()
+            #name: self.#name.take().unwrap()
         }
     });
     let struct_fields = quote! {
@@ -72,7 +72,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_struct_name {
-            pub fn build(self) -> Result<#struct_name, Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> Result<#struct_name, Box<dyn std::error::Error>> {
                 #builder_fields_none_check
 
                 Ok(#struct_name {
