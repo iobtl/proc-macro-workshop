@@ -169,12 +169,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
         match &f.ty.container_type {
             Some(ContainerType::Vec) => {
                 quote! {
-                    #name: Vec<#ty>
+                    #name: std::vec::Vec<#ty>
                 }
             }
             _ => {
                 quote! {
-                    #name: Option<#ty>
+                    #name: std::option::Option<#ty>
                 }
             }
         }
@@ -194,7 +194,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             None => {
                 quote! {
                     if self.#name.is_none() {
-                        return Err(#error.into());
+                        return std::result::Result::Err(#error.into());
                     }
                 }
             }
@@ -234,14 +234,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
         // `ty` contains the unwrapped/containing type
         let default_fn = match f.ty.container_type.as_ref() {
             Some(ContainerType::Vec) => quote! {
-                fn #name(&mut self, #name: Vec<#ty>) -> &mut Self {
+                fn #name(&mut self, #name: std::vec::Vec<#ty>) -> &mut Self {
                     self.#name = #name;
                     self
                 }
             },
             _ => quote! {
                 fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = Some(#name);
+                    self.#name = std::option::Option::Some(#name);
                     self
                 }
             },
@@ -285,7 +285,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_struct_name {
-            pub fn build(&mut self) -> Result<#struct_name, Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> std::result::Result<#struct_name, std::boxed::Box<dyn std::error::Error>> {
                 #builder_fields_check
 
                 Ok(#struct_name {
@@ -302,7 +302,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let name = &f.ident;
 
         quote! {
-            #name: Default::default()
+            #name: std::default::Default::default()
         }
     });
     let builder_impl_body = quote! {
