@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse_macro_input, AngleBracketedGenericArguments, Data, DataStruct, DeriveInput, Fields,
-    FieldsNamed, GenericArgument, Ident, Lit, Meta, NestedMeta, PathArguments, PathSegment, Type,
+    FieldsNamed, GenericArgument, Ident, Lit, Meta, MetaList, NestedMeta, PathArguments,
+    PathSegment, Type,
 };
 
 #[derive(PartialEq, Eq)]
@@ -39,80 +40,125 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let struct_name = input.ident;
-    let fields: Vec<FieldInfo> = match &input.data {
+    let fields: Result<Vec<FieldInfo>, syn::Error> = match &input.data {
         Data::Struct(DataStruct {
             fields: Fields::Named(FieldsNamed { named, .. }),
             ..
-        }) => {
-            named
-                .iter()
-                .filter_map(|f| {
-                    f.ident.as_ref().map(|ident| {
-                        let attribute_name = match f.attrs.iter().find(|attr| {
-                            attr.path
-                                .segments
-                                .iter()
-                                .any(|segment| segment.ident == "builder")
-                        }) {
-                            Some(attr) => match attr.parse_meta() {
-                                Ok(Meta::List(meta_list)) => {
-                                    meta_list.nested.iter().find_map(|m| match m {
+        }) => named
+            .iter()
+            .filter_map(|f| {
+                f.ident.as_ref().map(|ident| {
+                    let attribute_name = match f.attrs.iter().find(|attr| {
+                        attr.path
+                            .segments
+                            .iter()
+                            .any(|segment| segment.ident == "builder")
+                    }) {
+                        Some(attr) => {
+                            let attr_err = |meta: Option<&MetaList>, msg: &str| {
+                                let mut token_stream = proc_macro2::TokenStream::new();
+                                if let Some(s) =
+                                    attr.path.segments.iter().find(|s| s.ident == "builder")
+                                {
+                                    s.ident.to_tokens(&mut token_stream);
+                                } else {
+                                    attr.to_tokens(&mut token_stream);
+                                }
+
+                                // If the attribute has an additional (key = value) MetaList
+                                if let Some(m) = meta {
+                                    m.to_tokens(&mut token_stream);
+                                }
+
+                                Err(syn::Error::new_spanned(token_stream, msg))
+                            };
+
+                            match attr.parse_meta() {
+                                Ok(Meta::List(meta_list)) => meta_list
+                                    .nested
+                                    .iter()
+                                    .map(|m| match m {
                                         NestedMeta::Meta(Meta::NameValue(name_value)) => {
-                                            if name_value.path.segments.len() == 1 && name_value.path.segments.first().map(|s| s.ident == "each").unwrap_or(false) {
+                                            if name_value.path.segments.len() == 1
+                                                && name_value
+                                                    .path
+                                                    .segments
+                                                    .first()
+                                                    .map(|s| s.ident == "each")
+                                                    .unwrap_or(false)
+                                            {
                                                 match &name_value.lit {
-                                                    Lit::Str(s) => {
-                                                        Some(s.value())
-                                                    }
-                                                    _ => {
-                                                        panic!("Builder renamed field must be a string")
-                                                    }
+                                                    Lit::Str(s) => Ok(Some(s.value())),
+                                                    _ => attr_err(
+                                                        Some(&meta_list),
+                                                        "argument to `each` must be a string",
+                                                    ),
                                                 }
                                             } else {
-                                                panic!("Builder attribute value should be of the form #[builder(each = 'my_field_name')]")
+                                                attr_err(
+                                                    Some(&meta_list),
+                                                    "expected `builder(each = \"...\")`",
+                                                )
                                             }
                                         }
-                                        _ =>  panic!("Builder attribute value should be of the form #[builder(each = 'my_field_name')]"),
+                                        _ => attr_err(
+                                            Some(&meta_list),
+                                            "expected `builder(each = \"...\")`",
+                                        ),
                                     })
-                                }
-                                Ok(_) => None,
-                                Err(_) => {
-                                    panic!("Failed to parse attribute into meta item: {:?}", attr)
-                                }
-                            },
-                            _ => None,
-                        };
-                        let field_ty = match &f.ty {
-                            Type::Path(type_path) if type_path.qself.is_none() => {
-                                type_path.path.segments.iter().find_map(|segment| {
-                                    if segment.ident == "Option" {
-                                        Some(FieldTy {
-                                            ty: extract_contained_ty(segment),
-                                            container_type: Some(ContainerType::Option),
-                                        })
-                                    } else if segment.ident == "Vec" {
-                                      Some(FieldTy {
-                                            ty: extract_contained_ty(segment),
-                                            container_type: Some(ContainerType::Vec),
-                                        })
-                                    } else {
-                                         None
-                                    }
-                                })
-                                .unwrap_or(FieldTy { ty: &f.ty, container_type: None})
+                                    .next()
+                                    .unwrap_or_else(|| {
+                                        attr_err(None, "expected `builder(each = \"...\")`")
+                                    }),
+                                Ok(_) => attr_err(None, "expected `builder(each = \"...\")`"),
+                                e => e.map(|_| Some(String::new())),
                             }
-                            _ => FieldTy { ty: &f.ty, container_type: None },
-                        };
-
-                        FieldInfo {
-                            ident,
-                            ty: field_ty,
-                            attribute_name,
                         }
+                        _ => Ok(None),
+                    }?;
+                    let field_ty = match &f.ty {
+                        Type::Path(type_path) if type_path.qself.is_none() => type_path
+                            .path
+                            .segments
+                            .iter()
+                            .find_map(|segment| {
+                                if segment.ident == "Option" {
+                                    Some(FieldTy {
+                                        ty: extract_contained_ty(segment),
+                                        container_type: Some(ContainerType::Option),
+                                    })
+                                } else if segment.ident == "Vec" {
+                                    Some(FieldTy {
+                                        ty: extract_contained_ty(segment),
+                                        container_type: Some(ContainerType::Vec),
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(FieldTy {
+                                ty: &f.ty,
+                                container_type: None,
+                            }),
+                        _ => FieldTy {
+                            ty: &f.ty,
+                            container_type: None,
+                        },
+                    };
+
+                    Ok(FieldInfo {
+                        ident,
+                        ty: field_ty,
+                        attribute_name,
                     })
                 })
-                .collect()
-        }
+            })
+            .collect(),
         _ => unimplemented!(),
+    };
+    let fields = match fields {
+        Ok(f) => f,
+        Err(e) => return e.into_compile_error().into(),
     };
 
     let builder_struct_name = format_ident!("{}Builder", struct_name);
