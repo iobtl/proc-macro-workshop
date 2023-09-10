@@ -1,8 +1,10 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Literal, Punct, TokenTree};
+use proc_macro2::TokenTree;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{
-    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, GenericParam, Generics,
+    parse_macro_input, parse_quote, spanned::Spanned, Data, DataStruct, DeriveInput, Fields,
+    FieldsNamed, GenericArgument, GenericParam, Generics, Ident, Path, PathArguments, Type,
+    TypePath,
 };
 use tap::{Pipe, Tap};
 
@@ -11,7 +13,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     eprintln!("{:#?}", input);
 
-    let generics = add_trait_bounds(input.generics);
+    let phantom_data_ty_params = extract_phantom_data_params(&input.data);
+    let generics = add_trait_bounds(input.generics, &phantom_data_ty_params);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let struct_name = input.ident;
@@ -96,10 +99,62 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-fn add_trait_bounds(mut generics: Generics) -> Generics {
+fn extract_phantom_data_params(data: &Data) -> Vec<Ident> {
+    let mut params = Vec::new();
+
+    match data {
+        Data::Struct(DataStruct {
+            fields: Fields::Named(FieldsNamed { named, .. }),
+            ..
+        }) => {
+            for named_field in named.iter() {
+                if let Type::Path(TypePath {
+                    path: Path { segments, .. },
+                    ..
+                }) = &named_field.ty
+                {
+                    for segment in segments.iter() {
+                        if segment.ident == "PhantomData" {
+                            match &segment.arguments {
+                                PathArguments::AngleBracketed(args) => {
+                                    for arg in args.args.iter() {
+                                        match arg {
+                                            GenericArgument::Type(ty) => match ty {
+                                                Type::Path(TypePath {
+                                                    path: Path { segments, .. },
+                                                    ..
+                                                }) => {
+                                                    if let Some(brack_segment) =
+                                                        segments.iter().next()
+                                                    {
+                                                        params.push(brack_segment.ident.clone());
+                                                    }
+                                                }
+                                                _ => unimplemented!(),
+                                            },
+                                            _ => unimplemented!(),
+                                        }
+                                    }
+                                }
+                                _ => unimplemented!(),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => unimplemented!(),
+    }
+
+    params
+}
+
+fn add_trait_bounds(mut generics: Generics, phantom_data_ty_params: &[Ident]) -> Generics {
     for param in &mut generics.params {
         if let GenericParam::Type(type_params) = param {
-            type_params.bounds.push(parse_quote!(std::fmt::Debug));
+            if !phantom_data_ty_params.contains(&type_params.ident) {
+                type_params.bounds.push(parse_quote!(std::fmt::Debug));
+            }
         }
     }
 
