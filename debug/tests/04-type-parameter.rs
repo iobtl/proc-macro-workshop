@@ -27,6 +27,8 @@ pub struct Field<T> {
     bitmask: u8,
 }
 
+struct NonDebug;
+
 fn main() {
     let f = Field {
         value: "F",

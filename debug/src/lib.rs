@@ -1,13 +1,18 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Punct, TokenTree};
 use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput};
+use syn::{
+    parse_macro_input, parse_quote, spanned::Spanned, Data, DeriveInput, GenericParam, Generics,
+};
 use tap::{Pipe, Tap};
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     eprintln!("{:#?}", input);
+
+    let generics = add_trait_bounds(input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let struct_name = input.ident;
     // NOTE: quote! will automatically enclose strings with double quotes in the final token stream
@@ -76,7 +81,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     let trait_impl = quote!(
-         impl std::fmt::Debug for #struct_name {
+         impl #impl_generics std::fmt::Debug for #struct_name #ty_generics #where_clause {
             fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 #debug_struct
             }
@@ -89,4 +94,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .into_token_stream()
         .tap(|t| eprintln!("{:#}", t))
         .into()
+}
+
+fn add_trait_bounds(mut generics: Generics) -> Generics {
+    for param in &mut generics.params {
+        if let GenericParam::Type(type_params) = param {
+            type_params.bounds.push(parse_quote!(std::fmt::Debug));
+        }
+    }
+
+    generics
 }
